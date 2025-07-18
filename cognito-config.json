@@ -1,0 +1,10 @@
+{
+  "timestamp": "2025-07-18T23:24:47Z",
+  "environment": "dev",
+  "region": "us-east-1",
+  "userPoolId": "us-east-1_oEQt1dRJt",
+  "userPoolClientId": "9rkbb6n8nsoabddr2cq14km6t", 
+  "identityPoolId": "us-east-1:a10e00b6-1afa-44dd-850c-92faeaf2e885",
+  "awsAccount": "612031147518",
+  "userPoolName": "medusa-serverless-users"
+}

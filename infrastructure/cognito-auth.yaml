@@ -1,0 +1,290 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Cognito User Pool for Medusa Serverless Authentication with Buyer/Seller Roles'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+    Description: Environment name
+  
+  AppName:
+    Type: String
+    Default: medusa-serverless
+    Description: Application name
+
+Resources:
+  # Cognito User Pool
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub '${AppName}-${Environment}-users'
+      AliasAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      EmailVerificationMessage: 'Welcome to Medusa Serverless! Please verify your email: {####}'
+      EmailVerificationSubject: 'Verify your Medusa Serverless account'
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Required: true
+          Mutable: true
+        - Name: given_name
+          AttributeDataType: String
+          Required: true
+          Mutable: true
+        - Name: family_name
+          AttributeDataType: String
+          Required: true
+          Mutable: true
+        - Name: role
+          AttributeDataType: String
+          Required: false
+          Mutable: true
+          DeveloperOnlyAttribute: false
+        - Name: seller_company
+          AttributeDataType: String
+          Required: false
+          Mutable: true
+          DeveloperOnlyAttribute: false
+        - Name: seller_verified
+          AttributeDataType: String
+          Required: false
+          Mutable: true
+          DeveloperOnlyAttribute: false
+      UserPoolTags:
+        Environment: !Ref Environment
+        Application: !Ref AppName
+
+  # Cognito User Pool Client
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub '${AppName}-${Environment}-web'
+      UserPoolId: !Ref CognitoUserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_PASSWORD_AUTH
+      ReadAttributes:
+        - email
+        - given_name
+        - family_name
+        - custom:role
+        - custom:seller_company
+        - custom:seller_verified
+      WriteAttributes:
+        - email
+        - given_name
+        - family_name
+        - custom:role
+        - custom:seller_company
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: days
+      AccessTokenValidity: 24
+      IdTokenValidity: 24
+      RefreshTokenValidity: 30
+      PreventUserExistenceErrors: ENABLED
+
+  # Cognito Identity Pool
+  CognitoIdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: !Sub '${AppName}-${Environment}-identity'
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+        - ClientId: !Ref CognitoUserPoolClient
+          ProviderName: !GetAtt CognitoUserPool.ProviderName
+
+  # IAM Role for authenticated users
+  CognitoAuthenticatedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AppName}-${Environment}-authenticated'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                cognito-identity.amazonaws.com:aud: !Ref CognitoIdentityPool
+              ForAnyValue:StringLike:
+                cognito-identity.amazonaws.com:amr: authenticated
+      Policies:
+        - PolicyName: CognitoAuthenticatedPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-identity:GetCredentialsForIdentity
+                  - cognito-identity:GetId
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - execute-api:Invoke
+                Resource: '*'
+
+  # IAM Role for unauthenticated users (minimal access)
+  CognitoUnauthenticatedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AppName}-${Environment}-unauthenticated'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                cognito-identity.amazonaws.com:aud: !Ref CognitoIdentityPool
+              ForAnyValue:StringLike:
+                cognito-identity.amazonaws.com:amr: unauthenticated
+      Policies:
+        - PolicyName: CognitoUnauthenticatedPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - execute-api:Invoke
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    execute-api:Endpoint: 'products'
+
+  # Identity Pool Role Attachment
+  IdentityPoolRoleAttachment:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref CognitoIdentityPool
+      Roles:
+        authenticated: !GetAtt CognitoAuthenticatedRole.Arn
+        unauthenticated: !GetAtt CognitoUnauthenticatedRole.Arn
+
+  # Pre-signup Lambda trigger (for role assignment)
+  PreSignupLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AppName}-${Environment}-presignup-lambda'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: CognitoUserPoolPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:AdminUpdateUserAttributes
+                  - cognito-idp:AdminGetUser
+                Resource: !GetAtt CognitoUserPool.Arn
+
+  # Pre-signup Lambda function
+  PreSignupLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AppName}-${Environment}-presignup'
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt PreSignupLambdaRole.Arn
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            console.log('Pre-signup event:', JSON.stringify(event, null, 2));
+            
+            // Auto-confirm user (you can add email verification logic here)
+            event.response.autoConfirmUser = true;
+            event.response.autoVerifyEmail = true;
+            
+            // Set default role based on custom attribute or default to buyer
+            const requestedRole = event.request.userAttributes['custom:role'] || 'buyer';
+            const validRoles = ['buyer', 'seller', 'admin'];
+            
+            if (validRoles.includes(requestedRole)) {
+              event.response.userAttributes = {
+                ...event.response.userAttributes,
+                'custom:role': requestedRole,
+                'custom:seller_verified': requestedRole === 'seller' ? 'pending' : 'n/a'
+              };
+            } else {
+              event.response.userAttributes = {
+                ...event.response.userAttributes,
+                'custom:role': 'buyer',
+                'custom:seller_verified': 'n/a'
+              };
+            }
+            
+            return event;
+          };
+
+  # Lambda permission for Cognito
+  PreSignupLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref PreSignupLambda
+      Action: lambda:InvokeFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt CognitoUserPool.Arn
+
+  # Update User Pool with Lambda trigger
+  UserPoolLambdaConfig:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub '${AppName}-${Environment}-users'
+      LambdaConfig:
+        PreSignUp: !GetAtt PreSignupLambda.Arn
+
+Outputs:
+  UserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref CognitoUserPool
+    Export:
+      Name: !Sub '${AWS::StackName}-UserPoolId'
+
+  UserPoolClientId:
+    Description: Cognito User Pool Client ID
+    Value: !Ref CognitoUserPoolClient
+    Export:
+      Name: !Sub '${AWS::StackName}-UserPoolClientId'
+
+  IdentityPoolId:
+    Description: Cognito Identity Pool ID
+    Value: !Ref CognitoIdentityPool
+    Export:
+      Name: !Sub '${AWS::StackName}-IdentityPoolId'
+
+  Region:
+    Description: AWS Region
+    Value: !Ref 'AWS::Region'
+    Export:
+      Name: !Sub '${AWS::StackName}-Region'
+
+  UserPoolDomain:
+    Description: Cognito User Pool Domain
+    Value: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPool}'
+    Export:
+      Name: !Sub '${AWS::StackName}-UserPoolDomain'

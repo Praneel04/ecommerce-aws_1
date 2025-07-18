@@ -1,0 +1,282 @@
+service: medusa-serverless-mvp
+
+frameworkVersion: '>=3.0.0'
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: us-east-1
+  stage: ${opt:stage, 'dev'}
+  memorySize: 512
+  timeout: 30
+  environment:
+    STAGE: ${self:provider.stage}
+    REGION: ${self:provider.region}
+    PRODUCTS_TABLE: ${self:custom.productsTable}
+    USERS_TABLE: ${self:custom.usersTable}
+    ORDERS_TABLE: ${self:custom.ordersTable}
+    CARTS_TABLE: ${self:custom.cartsTable}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchGetItem
+        - dynamodb:BatchWriteItem
+      Resource:
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.productsTable}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.productsTable}/index/*"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.usersTable}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.usersTable}/index/*"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.ordersTable}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.ordersTable}/index/*"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.cartsTable}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.cartsTable}/index/*"
+
+custom:
+  productsTable: medusa-products-${self:provider.stage}
+  usersTable: medusa-users-${self:provider.stage}
+  ordersTable: medusa-orders-${self:provider.stage}
+  cartsTable: medusa-carts-${self:provider.stage}
+
+functions:
+  # Health check
+  health:
+    handler: dist/lambda/health.handler
+    events:
+      - http:
+          path: /health
+          method: get
+          cors: true
+
+  # Product functions
+  getProducts:
+    handler: dist/lambda/products.getProducts
+    events:
+      - http:
+          path: /api/products
+          method: get
+          cors: true
+
+  getProduct:
+    handler: dist/lambda/products.getProduct
+    events:
+      - http:
+          path: /api/products/{id}
+          method: get
+          cors: true
+
+  createProduct:
+    handler: dist/lambda/products.createProduct
+    events:
+      - http:
+          path: /api/products
+          method: post
+          cors: true
+
+  updateProduct:
+    handler: dist/lambda/products.updateProduct
+    events:
+      - http:
+          path: /api/products/{id}
+          method: put
+          cors: true
+
+  deleteProduct:
+    handler: dist/lambda/products.deleteProduct
+    events:
+      - http:
+          path: /api/products/{id}
+          method: delete
+          cors: true
+
+  # User/Auth functions
+  login:
+    handler: dist/lambda/auth.login
+    events:
+      - http:
+          path: /api/auth/login
+          method: post
+          cors: true
+
+  register:
+    handler: dist/lambda/auth.register
+    events:
+      - http:
+          path: /api/auth/register
+          method: post
+          cors: true
+
+  # Cart functions
+  getCart:
+    handler: dist/lambda/cart.getCart
+    events:
+      - http:
+          path: /api/cart/{id}
+          method: get
+          cors: true
+
+  createCart:
+    handler: dist/lambda/cart.createCart
+    events:
+      - http:
+          path: /api/cart
+          method: post
+          cors: true
+
+  addToCart:
+    handler: dist/lambda/cart.addToCart
+    events:
+      - http:
+          path: /api/cart/{id}/items
+          method: post
+          cors: true
+
+  # Order functions
+  getOrders:
+    handler: dist/lambda/orders.getOrders
+    events:
+      - http:
+          path: /api/orders
+          method: get
+          cors: true
+
+  createOrder:
+    handler: dist/lambda/orders.createOrder
+    events:
+      - http:
+          path: /api/orders
+          method: post
+          cors: true
+
+resources:
+  Resources:
+    # Products Table
+    ProductsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.productsTable}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: PK
+            AttributeType: S
+          - AttributeName: SK
+            AttributeType: S
+          - AttributeName: GSI1PK
+            AttributeType: S
+          - AttributeName: GSI1SK
+            AttributeType: S
+        KeySchema:
+          - AttributeName: PK
+            KeyType: HASH
+          - AttributeName: SK
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: GSI1
+            KeySchema:
+              - AttributeName: GSI1PK
+                KeyType: HASH
+              - AttributeName: GSI1SK
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+
+    # Users Table
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.usersTable}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: PK
+            AttributeType: S
+          - AttributeName: SK
+            AttributeType: S
+          - AttributeName: GSI1PK
+            AttributeType: S
+          - AttributeName: GSI1SK
+            AttributeType: S
+        KeySchema:
+          - AttributeName: PK
+            KeyType: HASH
+          - AttributeName: SK
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: GSI1
+            KeySchema:
+              - AttributeName: GSI1PK
+                KeyType: HASH
+              - AttributeName: GSI1SK
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+
+    # Orders Table
+    OrdersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.ordersTable}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: PK
+            AttributeType: S
+          - AttributeName: SK
+            AttributeType: S
+          - AttributeName: GSI1PK
+            AttributeType: S
+          - AttributeName: GSI1SK
+            AttributeType: S
+        KeySchema:
+          - AttributeName: PK
+            KeyType: HASH
+          - AttributeName: SK
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: GSI1
+            KeySchema:
+              - AttributeName: GSI1PK
+                KeyType: HASH
+              - AttributeName: GSI1SK
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+
+    # Carts Table
+    CartsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.cartsTable}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: PK
+            AttributeType: S
+          - AttributeName: SK
+            AttributeType: S
+          - AttributeName: GSI1PK
+            AttributeType: S
+          - AttributeName: GSI1SK
+            AttributeType: S
+        KeySchema:
+          - AttributeName: PK
+            KeyType: HASH
+          - AttributeName: SK
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: GSI1
+            KeySchema:
+              - AttributeName: GSI1PK
+                KeyType: HASH
+              - AttributeName: GSI1SK
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        TimeToLiveSpecification:
+          AttributeName: TTL
+          Enabled: true
+
+plugins:
+  - serverless-offline

@@ -1,0 +1,16 @@
+service: medusa-test
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+
+functions:
+  health:
+    handler: dist/lambda/health.handler
+    events:
+      - httpApi:
+          path: /health
+          method: get
+
+plugins:
+  - serverless-offline
